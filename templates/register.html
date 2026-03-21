@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UPI Shield - Register</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+</head>
+<body class="auth-page">
+  <main class="auth-wrapper">
+    <section class="auth-card">
+      <h1>Register</h1>
+      <p class="subtitle">Create your account</p>
+      <div id="message" class="message"></div>
+      <form id="register-form">
+        <label>Name</label>
+        <input id="name" type="text" required />
+        <label>Email</label>
+        <input id="email" type="email" required />
+        <label>Create Password</label>
+        <input id="password" type="password" required />
+        <label>Confirm Password</label>
+        <input id="confirm-password" type="password" required />
+        <button type="submit">Register</button>
+      </form>
+      <p class="hint">Already have an account? <a href="{{ url_for('login_page') }}">Login</a></p>
+    </section>
+  </main>
+  <script src="{{ url_for('static', filename='register.js') }}"></script>
+</body>
+</html>

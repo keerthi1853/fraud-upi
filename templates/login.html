@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UPI Shield - Login</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+</head>
+<body class="auth-page">
+  <main class="auth-wrapper">
+    <section class="auth-card">
+      <h1>Login</h1>
+      <p class="subtitle">Enter your email and password</p>
+      <div id="message" class="message"></div>
+      <form id="login-form">
+        <label>Email</label>
+        <input id="email" type="email" required />
+        <label>Password</label>
+        <input id="password" type="password" required />
+        <button type="submit">Login</button>
+      </form>
+      <p class="hint">New user? <a href="{{ url_for('register_page') }}">Create account</a></p>
+      <p class="hint">Demo: <code>admin@upi.com / admin123</code></p>
+    </section>
+  </main>
+  <script src="{{ url_for('static', filename='login.js') }}"></script>
+</body>
+</html>

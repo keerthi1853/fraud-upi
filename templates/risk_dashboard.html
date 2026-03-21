@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UPI Shield - Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>Risk Scoring Dashboard</h1>
+    <div class="topbar-right">
+      <span>User: <strong>{{ username }}</strong></span>
+      <a class="btn ghost small" href="{{ url_for('home_page') }}">Back to Main Page</a>
+      <button id="logout-btn" class="danger">Logout</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <h2>Risk Rules</h2>
+      <ul>
+        <li>More than 1L is not possible to transfer.</li>
+        <li>More than 10k to 50k is Medium Risk.</li>
+        <li>Above 50k to 1L is High Risk.</li>
+        <li>Up to 10k is Low Risk.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Check Transfer Risk Level</h2>
+      <form id="risk-form">
+        <label>Enter Amount (INR)</label>
+        <input id="amount" type="number" min="0" placeholder="Example: 25000" required />
+        <button type="submit">Check Risk</button>
+      </form>
+      <div id="risk-result" class="result hidden"></div>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='common.js') }}"></script>
+  <script src="{{ url_for('static', filename='risk.js') }}"></script>
+</body>
+</html>

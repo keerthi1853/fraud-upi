@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UPI Shield - Main Page</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>UPI Shield</h1>
+    <div class="topbar-right">
+      <span>Welcome, <strong>{{ username }}</strong></span>
+      <button id="logout-btn" class="danger">Logout</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="hero">
+      <h2>Mission</h2>
+      <p>Deliver fast, reliable fraud prevention for UPI transactions with clear and actionable risk awareness.</p>
+    </section>
+
+    <section class="card">
+      <h2>Vision</h2>
+      <p>Build a trusted digital payment ecosystem where transactions are safer and users transact with confidence.</p>
+    </section>
+
+    <section class="card">
+      <h2>Services</h2>
+      <ul>
+        <li>Transaction amount risk-level guidance</li>
+        <li>Transfer-limit awareness and rule alerts</li>
+        <li>Simple decision support for safer UPI usage</li>
+      </ul>
+    </section>
+
+    <section class="card center">
+      <a class="btn primary" href="{{ url_for('dashboard_page') }}">Open Dashboard</a>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='common.js') }}"></script>
+</body>
+</html>

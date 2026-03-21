@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UPI Fraud Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>UPI Fraud Detection and Risk Scoring</h1>
+    <div class="topbar-right">
+      <span>Logged in as: <strong>{{ username }}</strong></span>
+      <button id="logout-btn" class="danger">Logout</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="hero">
+      <h2>Mission</h2>
+      <p>Deliver fast, reliable fraud prevention for UPI transactions by combining data-driven detection with actionable risk levels.</p>
+    </section>
+
+    <section class="card">
+      <h2>Vision</h2>
+      <p>Build a trusted UPI ecosystem where every payment is monitored in real time, fraud losses are minimized, and genuine users get seamless experiences.</p>
+    </section>
+
+    <section class="card">
+      <h2>Services</h2>
+      <ul>
+        <li>Real-time transaction risk scoring</li>
+        <li>Risk classification: Low, Medium, High</li>
+        <li>Action recommendation for fraud operations</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Model Performance</h2>
+      {% if model_available and metrics %}
+      <div class="metrics-grid">
+        <div class="metric"><span>Accuracy</span><strong>{{ "%.4f"|format(metrics.get("Accuracy", 0)) }}</strong></div>
+        <div class="metric"><span>Precision</span><strong>{{ "%.4f"|format(metrics.get("Precision", 0)) }}</strong></div>
+        <div class="metric"><span>Recall</span><strong>{{ "%.4f"|format(metrics.get("Recall", 0)) }}</strong></div>
+        <div class="metric"><span>F1 Score</span><strong>{{ "%.4f"|format(metrics.get("F1_Score", 0)) }}</strong></div>
+        <div class="metric"><span>ROC AUC</span><strong>{{ "%.4f"|format(metrics.get("ROC_AUC", 0)) }}</strong></div>
+      </div>
+      {% else %}
+      <p>Model metrics are not available. Upload the model file to enable this section.</p>
+      {% endif %}
+    </section>
+
+    <section class="card">
+      <h2>Risk Scoring Service</h2>
+      <form id="risk-form" class="grid-form">
+        <label>Amount
+          <input id="amount" type="number" min="0" value="1000" required />
+        </label>
+        <label>Transaction Frequency
+          <input id="transaction-frequency" type="number" min="0" value="5" required />
+        </label>
+        <label>Transaction Type
+          <select id="transaction-type">
+            <option>P2P</option>
+            <option>P2M</option>
+            <option>Bill Payment</option>
+            <option>Recharge</option>
+            <option>Other</option>
+          </select>
+        </label>
+        <label>Payment Gateway
+          <select id="payment-gateway">
+            <option>GooglePay</option>
+            <option>PhonePe</option>
+            <option>Paytm</option>
+            <option>BHIM</option>
+            <option>Unknown</option>
+          </select>
+        </label>
+        <label>Merchant Category
+          <select id="merchant-category">
+            <option>Grocery</option>
+            <option>Food</option>
+            <option>Travel</option>
+            <option>Utilities</option>
+            <option>Shopping</option>
+            <option>Other</option>
+          </select>
+        </label>
+        <label>Device OS
+          <select id="device-os">
+            <option>Android</option>
+            <option>iOS</option>
+            <option>Other</option>
+          </select>
+        </label>
+        <button type="submit">Calculate Risk</button>
+      </form>
+
+      <div id="risk-result" class="result hidden"></div>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
