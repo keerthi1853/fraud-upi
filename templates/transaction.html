@@ -1,0 +1,43 @@
+{% extends 'base.html' %}
+{% block title %}Transaction | FraudShield{% endblock %}
+{% block content %}
+<section class="card">
+    <h2>Transaction Risk Check</h2>
+    <form method="POST" class="transaction-form">
+        <div class="grid-2">
+            <input type="number" step="0.01" name="transaction_amount" placeholder="Transaction Amount" value="{{ form_values.get('transaction_amount', '') }}" required>
+            <input type="text" name="transaction_type" placeholder="Transaction Type (P2P / P2M / Merchant)" value="{{ form_values.get('transaction_type', '') }}" required>
+        </div>
+
+        <div class="grid-2">
+            <input type="text" name="time_of_transaction" placeholder="Time of Transaction" value="{{ form_values.get('time_of_transaction', '') }}" required>
+            <input type="text" name="device_used" placeholder="Device Used (Android/iOS/Web)" value="{{ form_values.get('device_used', '') }}" required>
+        </div>
+
+        <div class="grid-2">
+            <input type="text" name="location" placeholder="Location (City/State)" value="{{ form_values.get('location', '') }}" required>
+            <input type="text" name="payment_method" placeholder="Payment Method (UPI/Card/Wallet)" value="{{ form_values.get('payment_method', '') }}" required>
+        </div>
+
+        <div class="grid-2">
+            <input type="number" step="1" name="previous_fraudulent_transactions" placeholder="Previous Fraudulent Transactions" value="{{ form_values.get('previous_fraudulent_transactions', '') }}" required>
+            <input type="number" step="0.1" name="account_age" placeholder="Account Age (months)" value="{{ form_values.get('account_age', '') }}" required>
+        </div>
+
+        <div class="grid-2">
+            <input type="number" step="1" name="number_of_transactions_last_24h" placeholder="Transactions in Last 24H" value="{{ form_values.get('number_of_transactions_last_24h', '') }}" required>
+            <input type="text" value="Only logged-in users can check risk" disabled>
+        </div>
+
+        <button class="btn" type="submit">Predict Risk</button>
+    </form>
+</section>
+
+{% if prediction %}
+<section class="card result {{ prediction.risk_level.split()[0]|lower }}">
+    <h3>Prediction Result: {{ prediction.risk_level }}</h3>
+    <p><strong>Fraud Probability:</strong> {{ prediction.fraud_probability }}%</p>
+    <p><strong>System Action:</strong> {{ prediction.action }}</p>
+</section>
+{% endif %}
+{% endblock %}
