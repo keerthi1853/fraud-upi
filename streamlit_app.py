@@ -11,12 +11,15 @@ import pandas as pd
 import pickle
 import streamlit as st
 from werkzeug.security import check_password_hash, generate_password_hash
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 st.set_page_config(page_title='UPI Shield', page_icon=':shield:', layout='wide')
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / 'fraud_app.db'
 USERS_EXCEL_PATH = BASE_DIR / 'registered_users.xlsx'
+DATABASE_URL = os.environ.get('DATABASE_URL')
 MODEL_CANDIDATES = [
     BASE_DIR / 'UPI_Fraud_Detection_Model_Fixed.pkl',
     BASE_DIR.parent / 'trans' / 'UPI_Fraud_Detection_Model_Fixed.pkl',
@@ -96,64 +99,137 @@ def apply_custom_theme():
 
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    if DATABASE_URL:
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+    else:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
     return conn
+
+
+def _sql(query: str) -> str:
+    return query.replace('?', '%s') if DATABASE_URL else query
+
+
+def fetch_one(query: str, params=()):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(_sql(query), params)
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    if row is None:
+        return None
+    return dict(row) if not isinstance(row, dict) else row
+
+
+def fetch_all(query: str, params=()):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(_sql(query), params)
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return [dict(r) if not isinstance(r, dict) else r for r in rows]
+
+
+def run_write(query: str, params=()):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(_sql(query), params)
+    conn.commit()
+    cur.close()
+    conn.close()
 
 
 def init_db():
     conn = get_db()
-    conn.execute(
-        '''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            email TEXT UNIQUE NOT NULL,
-            phone TEXT NOT NULL,
-            password_hash TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-        '''
-    )
-    conn.execute(
-        '''
-        CREATE TABLE IF NOT EXISTS feedback (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            email TEXT NOT NULL,
-            message TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-        '''
-    )
-    conn.execute(
-        '''
-        CREATE TABLE IF NOT EXISTS reset_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            code TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            destination TEXT,
-            FOREIGN KEY (user_id) REFERENCES users (id)
-        )
-        '''
-    )
+    cur = conn.cursor()
 
-    cols = [row['name'] for row in conn.execute("PRAGMA table_info(reset_messages)").fetchall()]
-    if 'destination' not in cols:
-        conn.execute("ALTER TABLE reset_messages ADD COLUMN destination TEXT")
+    if DATABASE_URL:
+        cur.execute(
+            '''
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                phone TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            '''
+        )
+        cur.execute(
+            '''
+            CREATE TABLE IF NOT EXISTS feedback (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            '''
+        )
+        cur.execute(
+            '''
+            CREATE TABLE IF NOT EXISTS reset_messages (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                code TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                destination TEXT
+            )
+            '''
+        )
+    else:
+        cur.execute(
+            '''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                phone TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            '''
+        )
+        cur.execute(
+            '''
+            CREATE TABLE IF NOT EXISTS feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            '''
+        )
+        cur.execute(
+            '''
+            CREATE TABLE IF NOT EXISTS reset_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                code TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                destination TEXT,
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            )
+            '''
+        )
+
+        cols = [row['name'] for row in cur.execute("PRAGMA table_info(reset_messages)").fetchall()]
+        if 'destination' not in cols:
+            cur.execute("ALTER TABLE reset_messages ADD COLUMN destination TEXT")
 
     conn.commit()
+    cur.close()
     conn.close()
 
 
 def export_users_to_excel():
-    conn = get_db()
-    users_df = pd.read_sql_query(
-        'SELECT id, name, email, phone, created_at FROM users ORDER BY id DESC',
-        conn
-    )
-    conn.close()
+    rows = fetch_all('SELECT id, name, email, phone, created_at FROM users ORDER BY id DESC')
+    users_df = pd.DataFrame(rows, columns=['id', 'name', 'email', 'phone', 'created_at'])
     users_df.to_excel(USERS_EXCEL_PATH, index=False)
 
 
@@ -193,8 +269,6 @@ def init_session():
         st.session_state.pending_medium_txn = None
     if 'pending_txn_otp' not in st.session_state:
         st.session_state.pending_txn_otp = None
-    if 'pending_txn_channel' not in st.session_state:
-        st.session_state.pending_txn_channel = None
     if 'auth_view' not in st.session_state:
         st.session_state.auth_view = 'landing'
 
@@ -377,9 +451,7 @@ def auth_ui():
             st.markdown('</div>', unsafe_allow_html=True)
 
             if submit:
-                conn = get_db()
-                user = conn.execute('SELECT * FROM users WHERE email = ?', (email.strip().lower(),)).fetchone()
-                conn.close()
+                user = fetch_one('SELECT * FROM users WHERE email = ?', (email.strip().lower(),))
 
                 if user and check_password_hash(user['password_hash'], password):
                     st.session_state.authenticated = True
@@ -396,17 +468,15 @@ def auth_ui():
                     send = st.form_submit_button('Send 6-digit OTP')
 
                 if send:
-                    conn = get_db()
-                    user = conn.execute(
+                    user = fetch_one(
                         'SELECT id, name, email FROM users WHERE email = ?', (email.strip().lower(),)
-                    ).fetchone()
+                    )
                     if user:
                         otp = generate_otp()
-                        conn.execute(
+                        run_write(
                             'INSERT INTO reset_messages (user_id, code, created_at, destination) VALUES (?, ?, ?, ?)',
                             (user['id'], otp, datetime.now().isoformat(), user['email']),
                         )
-                        conn.commit()
                         ok, err = send_otp_email(user['email'], user['name'], otp)
                         if ok:
                             st.success(f'OTP sent to {mask_email(user["email"])}')
@@ -414,7 +484,6 @@ def auth_ui():
                             st.error(f'OTP email failed: {err}')
                     else:
                         st.success('If email exists, OTP has been sent.')
-                    conn.close()
 
             with col2:
                 with st.form('reset_form'):
@@ -432,29 +501,25 @@ def auth_ui():
                     elif len(new_password) < 6:
                         st.error('Password must be at least 6 characters')
                     else:
-                        conn = get_db()
-                        user = conn.execute(
+                        user = fetch_one(
                             'SELECT id FROM users WHERE email = ?', (email_r.strip().lower(),)
-                        ).fetchone()
+                        )
                         if not user:
                             st.error('Invalid email or OTP')
-                            conn.close()
                         else:
-                            otp_row = conn.execute(
+                            otp_row = fetch_one(
                                 'SELECT id FROM reset_messages WHERE user_id = ? AND code = ? ORDER BY id DESC LIMIT 1',
                                 (user['id'], otp_r.strip()),
-                            ).fetchone()
+                            )
                             if not otp_row:
                                 st.error('Invalid email or OTP')
                             else:
-                                conn.execute(
+                                run_write(
                                     'UPDATE users SET password_hash = ? WHERE id = ?',
                                     (generate_password_hash(new_password), user['id']),
                                 )
-                                conn.execute('DELETE FROM reset_messages WHERE user_id = ?', (user['id'],))
-                                conn.commit()
+                                run_write('DELETE FROM reset_messages WHERE user_id = ?', (user['id'],))
                                 st.success('Password reset successful. Please login now.')
-                            conn.close()
 
     else:
         outer_left, center_col, outer_right = st.columns([1.1, 2.2, 1.1])
@@ -483,20 +548,23 @@ def auth_ui():
                 elif len(password) < 6:
                     st.error('Password must be at least 6 characters')
                 else:
-                    conn = get_db()
                     try:
-                        conn.execute(
+                        run_write(
                             'INSERT INTO users (name, email, phone, password_hash, created_at) VALUES (?, ?, ?, ?, ?)',
                             (name.strip(), email.strip().lower(), phone.strip(), generate_password_hash(password), datetime.now().isoformat()),
                         )
-                        conn.commit()
                         export_users_to_excel()
                         st.success('Registration successful. Please login.')
                         st.session_state.auth_view = 'login'
-                    except sqlite3.IntegrityError:
-                        st.error('Email already exists')
+                    except Exception as exc:
+                        if 'UNIQUE' in str(exc).upper() or 'DUPLICATE' in str(exc).upper():
+                            st.error('Email already exists')
+                        else:
+                            st.error(f'Registration failed: {exc}')
+                    else:
+                        pass
                     finally:
-                        conn.close()
+                        pass
 
 
 def home_page():
@@ -545,13 +613,10 @@ def home_page():
         if not all([name, email, message]):
             st.error('Please complete all feedback fields.')
         else:
-            conn = get_db()
-            conn.execute(
+            run_write(
                 'INSERT INTO feedback (name, email, message, created_at) VALUES (?, ?, ?, ?)',
                 (name.strip(), email.strip(), message.strip(), datetime.now().isoformat()),
             )
-            conn.commit()
-            conn.close()
             st.success('Thanks for your feedback!')
 
 
@@ -582,7 +647,6 @@ def transaction_page():
             location = st.text_input('Location', value='Chennai')
             payment_method = st.selectbox('Payment Method', ['UPI', 'Card', 'Wallet', 'NetBanking'])
             account_age = st.number_input('Account Age (months)', min_value=0.0, value=12.0, step=1.0)
-            otp_channel = st.selectbox('Medium Risk OTP Channel', ['Email', 'Registered Number'])
             payment_gateway = st.selectbox('Payment Gateway', ['GooglePay', 'PhonePe', 'Paytm', 'BHIM', 'Unknown'])
             merchant_category = st.selectbox('Merchant Category', ['Grocery', 'Food', 'Travel', 'Utilities', 'Shopping', 'Other'])
 
@@ -599,26 +663,18 @@ def transaction_page():
 
         elif level == 'Medium Risk':
             otp_code = generate_otp()
-            channel = otp_channel
             user = st.session_state.user
 
-            sent_ok = False
-            if channel == 'Email':
-                sent_ok, err = send_otp_email(
-                    user['email'],
-                    user['name'],
-                    otp_code,
-                    subject='FraudShield Transaction OTP'
-                )
-                if sent_ok:
-                    st.success(f'Transaction OTP sent to {mask_email(user["email"])}')
-                else:
-                    st.error(f'Could not send OTP email: {err}')
+            sent_ok, err = send_otp_email(
+                user['email'],
+                user['name'],
+                otp_code,
+                subject='FraudShield Transaction OTP'
+            )
+            if sent_ok:
+                st.success(f'Transaction OTP sent to {mask_email(user["email"])}')
             else:
-                # SMS gateway placeholder. For now we log OTP server-side for demo usage.
-                print(f"[SMS SIMULATION] Transaction OTP for user {user['id']} ({user['phone']}): {otp_code}")
-                st.success(f'Transaction OTP sent to your registered number {mask_phone(user["phone"])}')
-                sent_ok = True
+                st.error(f'Could not send OTP email: {err}')
 
             if sent_ok:
                 st.session_state.pending_medium_txn = {
@@ -627,7 +683,6 @@ def transaction_page():
                     'created_at': datetime.now().isoformat()
                 }
                 st.session_state.pending_txn_otp = otp_code
-                st.session_state.pending_txn_channel = channel
                 st.info('Enter OTP below to confirm this medium-risk transaction.')
 
         elif level == 'High Risk':
@@ -646,7 +701,7 @@ def transaction_page():
         pending = st.session_state.pending_medium_txn
         st.write(
             f"Pending transfer: **{pending['amount']:.2f}** to **{pending['beneficiary_name']}** "
-            f"via **{st.session_state.pending_txn_channel} OTP**"
+            f"via **Email OTP**"
         )
 
         with st.form('verify_txn_otp_form'):
@@ -658,7 +713,6 @@ def transaction_page():
                 st.success('OTP verified. Transaction is possible and confirmed.')
                 st.session_state.pending_medium_txn = None
                 st.session_state.pending_txn_otp = None
-                st.session_state.pending_txn_channel = None
             else:
                 st.error('Invalid OTP. Please try again.')
 
