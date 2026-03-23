@@ -372,6 +372,7 @@ def send_otp_email(recipient_email: str, name: str, otp_code: str, subject: str 
 
     if not smtp_user or not smtp_pass or not sender:
         return False, 'SMTP_USER / SMTP_PASS / SMTP_FROM env vars are missing'
+    smtp_pass = smtp_pass.replace(' ', '')
 
     msg = EmailMessage()
     msg['Subject'] = subject
@@ -381,14 +382,21 @@ def send_otp_email(recipient_email: str, name: str, otp_code: str, subject: str 
         f'Hello {name},\n\nYour 6-digit OTP is: {otp_code}\n\nDo not share this code.'
     )
 
+    # Try STARTTLS first (587), then fallback to SSL (465) for better compatibility.
     try:
         with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
             server.starttls()
             server.login(smtp_user, smtp_pass)
             server.send_message(msg)
         return True, None
-    except Exception as exc:
-        return False, str(exc)
+    except Exception as first_exc:
+        try:
+            with smtplib.SMTP_SSL(smtp_host, 465, timeout=30) as server:
+                server.login(smtp_user, smtp_pass)
+                server.send_message(msg)
+            return True, None
+        except Exception as second_exc:
+            return False, f'{first_exc} | SSL fallback failed: {second_exc}'
 
 
 def build_pipeline_input(data):
