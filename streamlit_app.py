@@ -3,7 +3,7 @@ import random
 import smtplib
 import sqlite3
 import string
-from datetime import datetime
+from datetime import datetime, timedelta
 from email.message import EmailMessage
 from pathlib import Path
 
@@ -24,6 +24,15 @@ MODEL_CANDIDATES = [
     BASE_DIR / 'UPI_Fraud_Detection_Model_Fixed.pkl',
     BASE_DIR.parent / 'trans' / 'UPI_Fraud_Detection_Model_Fixed.pkl',
 ]
+SECURITY_QUESTIONS = [
+    "What is your favorite teacher name?",
+    "What is your first school name?",
+    "What is your childhood best friend name?",
+]
+OTP_EXPIRY_MINUTES = 5
+OTP_MAX_ATTEMPTS = 3
+OTP_RESEND_COOLDOWN_SECONDS = 60
+OTP_LOCK_MINUTES = 10
 
 
 def apply_custom_theme():
@@ -155,6 +164,8 @@ def init_db():
                 email TEXT UNIQUE NOT NULL,
                 phone TEXT NOT NULL,
                 password_hash TEXT NOT NULL,
+                security_question TEXT,
+                security_answer_hash TEXT,
                 created_at TEXT NOT NULL
             )
             '''
@@ -177,10 +188,20 @@ def init_db():
                 user_id INTEGER NOT NULL REFERENCES users(id),
                 code TEXT NOT NULL,
                 created_at TEXT NOT NULL,
-                destination TEXT
+                destination TEXT,
+                purpose TEXT DEFAULT 'password_reset',
+                expires_at TEXT,
+                attempts INTEGER DEFAULT 0,
+                locked_until TEXT
             )
             '''
         )
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS security_question TEXT")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS security_answer_hash TEXT")
+        cur.execute("ALTER TABLE reset_messages ADD COLUMN IF NOT EXISTS purpose TEXT DEFAULT 'password_reset'")
+        cur.execute("ALTER TABLE reset_messages ADD COLUMN IF NOT EXISTS expires_at TEXT")
+        cur.execute("ALTER TABLE reset_messages ADD COLUMN IF NOT EXISTS attempts INTEGER DEFAULT 0")
+        cur.execute("ALTER TABLE reset_messages ADD COLUMN IF NOT EXISTS locked_until TEXT")
     else:
         cur.execute(
             '''
@@ -190,6 +211,8 @@ def init_db():
                 email TEXT UNIQUE NOT NULL,
                 phone TEXT NOT NULL,
                 password_hash TEXT NOT NULL,
+                security_question TEXT,
+                security_answer_hash TEXT,
                 created_at TEXT NOT NULL
             )
             '''
@@ -213,14 +236,32 @@ def init_db():
                 code TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 destination TEXT,
+                purpose TEXT DEFAULT 'password_reset',
+                expires_at TEXT,
+                attempts INTEGER DEFAULT 0,
+                locked_until TEXT,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
             '''
         )
 
+        users_cols = [row['name'] for row in cur.execute("PRAGMA table_info(users)").fetchall()]
+        if 'security_question' not in users_cols:
+            cur.execute("ALTER TABLE users ADD COLUMN security_question TEXT")
+        if 'security_answer_hash' not in users_cols:
+            cur.execute("ALTER TABLE users ADD COLUMN security_answer_hash TEXT")
+
         cols = [row['name'] for row in cur.execute("PRAGMA table_info(reset_messages)").fetchall()]
         if 'destination' not in cols:
             cur.execute("ALTER TABLE reset_messages ADD COLUMN destination TEXT")
+        if 'purpose' not in cols:
+            cur.execute("ALTER TABLE reset_messages ADD COLUMN purpose TEXT DEFAULT 'password_reset'")
+        if 'expires_at' not in cols:
+            cur.execute("ALTER TABLE reset_messages ADD COLUMN expires_at TEXT")
+        if 'attempts' not in cols:
+            cur.execute("ALTER TABLE reset_messages ADD COLUMN attempts INTEGER DEFAULT 0")
+        if 'locked_until' not in cols:
+            cur.execute("ALTER TABLE reset_messages ADD COLUMN locked_until TEXT")
 
     conn.commit()
     cur.close()
@@ -228,8 +269,13 @@ def init_db():
 
 
 def export_users_to_excel():
-    rows = fetch_all('SELECT id, name, email, phone, created_at FROM users ORDER BY id DESC')
-    users_df = pd.DataFrame(rows, columns=['id', 'name', 'email', 'phone', 'created_at'])
+    rows = fetch_all(
+        'SELECT id, name, email, phone, security_question, security_answer_hash, created_at FROM users ORDER BY id DESC'
+    )
+    users_df = pd.DataFrame(
+        rows,
+        columns=['id', 'name', 'email', 'phone', 'security_question', 'security_answer_hash', 'created_at']
+    )
     users_df.to_excel(USERS_EXCEL_PATH, index=False)
 
 
@@ -269,6 +315,12 @@ def init_session():
         st.session_state.pending_medium_txn = None
     if 'pending_txn_otp' not in st.session_state:
         st.session_state.pending_txn_otp = None
+    if 'pending_txn_otp_created_at' not in st.session_state:
+        st.session_state.pending_txn_otp_created_at = None
+    if 'pending_txn_otp_attempts' not in st.session_state:
+        st.session_state.pending_txn_otp_attempts = 0
+    if 'pending_txn_otp_resend_after' not in st.session_state:
+        st.session_state.pending_txn_otp_resend_after = None
     if 'auth_view' not in st.session_state:
         st.session_state.auth_view = 'landing'
 
@@ -407,6 +459,136 @@ def amount_risk_band(amount: float):
     return 'Very High Risk', 'Amount is extremely high. Transaction is blocked and sent for manual review.'
 
 
+def parse_dt(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value))
+    except Exception:
+        return None
+
+
+def get_demo_testcases():
+    return [
+        {
+            'Testcase ID': 'TC_001',
+            'Scenario': 'High-risk amount transaction',
+            'transaction_amount': 100000,
+            'transaction_type': 'P2P',
+            'location': 'Utilities',
+            'number_of_transactions_last_24h': 631,
+            'payment_gateway': 'GooglePay',
+            'device_used': 'Android',
+            'payment_method': 'UPI',
+            'account_age': 12,
+            'time_of_transaction': 12,
+        },
+        {
+            'Testcase ID': 'TC_002',
+            'Scenario': 'Low-risk transaction',
+            'transaction_amount': 4000,
+            'transaction_type': 'P2P',
+            'location': 'Food',
+            'number_of_transactions_last_24h': 10,
+            'payment_gateway': 'PhonePe',
+            'device_used': 'Android',
+            'payment_method': 'UPI',
+            'account_age': 12,
+            'time_of_transaction': 12,
+        },
+        {
+            'Testcase ID': 'TC_003',
+            'Scenario': 'High frequency with low amount',
+            'transaction_amount': 4000,
+            'transaction_type': 'P2P',
+            'location': 'Food',
+            'number_of_transactions_last_24h': 780,
+            'payment_gateway': 'Paytm',
+            'device_used': 'iOS',
+            'payment_method': 'UPI',
+            'account_age': 12,
+            'time_of_transaction': 12,
+        },
+        {
+            'Testcase ID': 'TC_004',
+            'Scenario': 'Medium-risk amount rule',
+            'transaction_amount': 25000,
+            'transaction_type': 'P2P',
+            'location': 'Utilities',
+            'number_of_transactions_last_24h': 100,
+            'payment_gateway': 'PhonePe',
+            'device_used': 'Android',
+            'payment_method': 'UPI',
+            'account_age': 12,
+            'time_of_transaction': 12,
+        },
+        {
+            'Testcase ID': 'TC_005',
+            'Scenario': 'Very high amount transaction',
+            'transaction_amount': 200000,
+            'transaction_type': 'P2P',
+            'location': 'Utilities',
+            'number_of_transactions_last_24h': 50,
+            'payment_gateway': 'GooglePay',
+            'device_used': 'Android',
+            'payment_method': 'UPI',
+            'account_age': 12,
+            'time_of_transaction': 12,
+        },
+        {
+            'Testcase ID': 'TC_006',
+            'Scenario': 'Gateway anomaly style case',
+            'transaction_amount': 12000,
+            'transaction_type': 'P2P',
+            'location': 'Utilities',
+            'number_of_transactions_last_24h': 250,
+            'payment_gateway': 'Unknown',
+            'device_used': 'Android',
+            'payment_method': 'UPI',
+            'account_age': 12,
+            'time_of_transaction': 12,
+        },
+    ]
+
+
+def build_testcase_output_table(model_bundle):
+    rows = []
+    for case in get_demo_testcases():
+        payload = {
+            'transaction_amount': case['transaction_amount'],
+            'transaction_type': case['transaction_type'],
+            'time_of_transaction': case['time_of_transaction'],
+            'device_used': case['device_used'],
+            'location': case['location'],
+            'previous_fraudulent_transactions': 0,
+            'number_of_transactions_last_24h': case['number_of_transactions_last_24h'],
+            'payment_method': case['payment_method'],
+            'account_age': case['account_age'],
+            'payment_gateway': case['payment_gateway'],
+            'merchant_category': case['location'],
+        }
+
+        model_score_text = 'N/A'
+        if model_bundle is not None:
+            try:
+                model_score = get_fraud_probability(model_bundle, payload)
+                model_score = max(0.0, min(1.0, model_score))
+                model_score_text = f"{model_score * 100:.2f}%"
+            except Exception:
+                model_score_text = 'Unavailable'
+
+        level, action = amount_risk_band(case['transaction_amount'])
+        rows.append({
+            'Testcase ID': case['Testcase ID'],
+            'Scenario': case['Scenario'],
+            'Input': f"Amt={case['transaction_amount']}, Type={case['transaction_type']}, Loc={case['location']}, Freq={case['number_of_transactions_last_24h']}, Gateway={case['payment_gateway']}, Device={case['device_used']}",
+            'Model Risk Score': model_score_text,
+            'Rule Decision': level,
+            'System Action': action,
+        })
+    return pd.DataFrame(rows)
+
+
 def auth_ui():
     view = st.session_state.auth_view
 
@@ -435,10 +617,10 @@ def auth_ui():
         return
 
     if view == 'login':
-        outer_left, center_col, outer_right = st.columns([1.1, 2.2, 1.1])
+        _, center_col, _ = st.columns([1.1, 2.2, 1.1])
         with center_col:
             st.markdown('<div class="back-note">Navigation</div>', unsafe_allow_html=True)
-            if st.button('⬅ Back to Welcome', use_container_width=True):
+            if st.button('Back to Welcome', use_container_width=True):
                 st.session_state.auth_view = 'landing'
                 st.rerun()
 
@@ -447,12 +629,11 @@ def auth_ui():
             with st.form('login_form'):
                 email = st.text_input('Email')
                 password = st.text_input('Password', type='password')
-                submit = st.form_submit_button('Login')
+                submitted = st.form_submit_button('Login')
             st.markdown('</div>', unsafe_allow_html=True)
 
-            if submit:
+            if submitted:
                 user = fetch_one('SELECT * FROM users WHERE email = ?', (email.strip().lower(),))
-
                 if user and check_password_hash(user['password_hash'], password):
                     st.session_state.authenticated = True
                     st.session_state.user = dict(user)
@@ -461,110 +642,176 @@ def auth_ui():
                 st.error('Invalid email or password')
 
             with st.expander('Forgot Password'):
-                col1, col2 = st.columns(2)
-            with col1:
-                with st.form('send_otp_form'):
-                    email = st.text_input('Registered Email')
-                    send = st.form_submit_button('Send 6-digit OTP')
+                c1, c2 = st.columns(2)
 
-                if send:
-                    user = fetch_one(
-                        'SELECT id, name, email FROM users WHERE email = ?', (email.strip().lower(),)
-                    )
-                    if user:
-                        otp = generate_otp()
-                        run_write(
-                            'INSERT INTO reset_messages (user_id, code, created_at, destination) VALUES (?, ?, ?, ?)',
-                            (user['id'], otp, datetime.now().isoformat(), user['email']),
-                        )
-                        ok, err = send_otp_email(user['email'], user['name'], otp)
-                        if ok:
-                            st.success(f'OTP sent to {mask_email(user["email"])}')
-                        else:
-                            st.error(f'OTP email failed: {err}')
-                    else:
-                        st.success('If email exists, OTP has been sent.')
+                with c1:
+                    with st.form('send_otp_form'):
+                        email_send = st.text_input('Registered Email')
+                        send = st.form_submit_button('Send 6-digit OTP')
 
-            with col2:
-                with st.form('reset_form'):
-                    email_r = st.text_input('Email for Reset')
-                    otp_r = st.text_input('Enter 6-digit OTP')
-                    new_password = st.text_input('New Password', type='password')
-                    confirm_new = st.text_input('Confirm New Password', type='password')
-                    reset = st.form_submit_button('Verify OTP & Reset Password')
-
-                if reset:
-                    if new_password != confirm_new:
-                        st.error('Passwords do not match')
-                    elif len(otp_r.strip()) != 6 or not otp_r.strip().isdigit():
-                        st.error('OTP must contain exactly 6 numbers')
-                    elif len(new_password) < 6:
-                        st.error('Password must be at least 6 characters')
-                    else:
-                        user = fetch_one(
-                            'SELECT id FROM users WHERE email = ?', (email_r.strip().lower(),)
-                        )
-                        if not user:
-                            st.error('Invalid email or OTP')
-                        else:
-                            otp_row = fetch_one(
-                                'SELECT id FROM reset_messages WHERE user_id = ? AND code = ? ORDER BY id DESC LIMIT 1',
-                                (user['id'], otp_r.strip()),
+                    if send:
+                        user = fetch_one('SELECT id, name, email FROM users WHERE email = ?', (email_send.strip().lower(),))
+                        if user:
+                            latest = fetch_one(
+                                "SELECT id, created_at, locked_until FROM reset_messages WHERE user_id = ? AND purpose = 'password_reset' ORDER BY id DESC LIMIT 1",
+                                (user['id'],)
                             )
-                            if not otp_row:
-                                st.error('Invalid email or OTP')
+                            now = datetime.now()
+                            if latest:
+                                locked_until = parse_dt(latest.get('locked_until'))
+                                created_at = parse_dt(latest.get('created_at'))
+                                if locked_until and now < locked_until:
+                                    st.error('Too many wrong attempts. Try again later.')
+                                elif created_at and (now - created_at).total_seconds() < OTP_RESEND_COOLDOWN_SECONDS:
+                                    wait_sec = int(OTP_RESEND_COOLDOWN_SECONDS - (now - created_at).total_seconds())
+                                    st.warning(f'Please wait {wait_sec}s before requesting another OTP.')
+                                else:
+                                    otp = generate_otp()
+                                    expires_at = (now + timedelta(minutes=OTP_EXPIRY_MINUTES)).isoformat()
+                                    run_write(
+                                        'INSERT INTO reset_messages (user_id, code, created_at, destination, purpose, expires_at, attempts, locked_until) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                                        (user['id'], otp, now.isoformat(), user['email'], 'password_reset', expires_at, 0, None),
+                                    )
+                                    ok, err = send_otp_email(user['email'], user['name'], otp)
+                                    if ok:
+                                        st.success(f'OTP sent to {mask_email(user["email"])}. Valid for {OTP_EXPIRY_MINUTES} minutes.')
+                                    else:
+                                        st.error(f'OTP email failed: {err}')
                             else:
+                                otp = generate_otp()
+                                expires_at = (now + timedelta(minutes=OTP_EXPIRY_MINUTES)).isoformat()
                                 run_write(
-                                    'UPDATE users SET password_hash = ? WHERE id = ?',
-                                    (generate_password_hash(new_password), user['id']),
+                                    'INSERT INTO reset_messages (user_id, code, created_at, destination, purpose, expires_at, attempts, locked_until) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                                    (user['id'], otp, now.isoformat(), user['email'], 'password_reset', expires_at, 0, None),
                                 )
-                                run_write('DELETE FROM reset_messages WHERE user_id = ?', (user['id'],))
-                                st.success('Password reset successful. Please login now.')
-
-    else:
-        outer_left, center_col, outer_right = st.columns([1.1, 2.2, 1.1])
-        with center_col:
-            st.markdown('<div class="back-note">Navigation</div>', unsafe_allow_html=True)
-            if st.button('⬅ Back to Welcome', use_container_width=True):
-                st.session_state.auth_view = 'landing'
-                st.rerun()
-
-            st.markdown('<div class="soft-card">', unsafe_allow_html=True)
-            st.subheader('Register')
-            with st.form('register_form'):
-                name = st.text_input('Name')
-                email = st.text_input('Email')
-                phone = st.text_input('Registered Number')
-                password = st.text_input('Password', type='password')
-                confirm = st.text_input('Confirm Password', type='password')
-                submit = st.form_submit_button('Register')
-            st.markdown('</div>', unsafe_allow_html=True)
-
-            if submit:
-                if not all([name, email, phone, password, confirm]):
-                    st.error('Please fill all fields')
-                elif password != confirm:
-                    st.error('Passwords do not match')
-                elif len(password) < 6:
-                    st.error('Password must be at least 6 characters')
-                else:
-                    try:
-                        run_write(
-                            'INSERT INTO users (name, email, phone, password_hash, created_at) VALUES (?, ?, ?, ?, ?)',
-                            (name.strip(), email.strip().lower(), phone.strip(), generate_password_hash(password), datetime.now().isoformat()),
-                        )
-                        export_users_to_excel()
-                        st.success('Registration successful. Please login.')
-                        st.session_state.auth_view = 'login'
-                    except Exception as exc:
-                        if 'UNIQUE' in str(exc).upper() or 'DUPLICATE' in str(exc).upper():
-                            st.error('Email already exists')
+                                ok, err = send_otp_email(user['email'], user['name'], otp)
+                                if ok:
+                                    st.success(f'OTP sent to {mask_email(user["email"])}. Valid for {OTP_EXPIRY_MINUTES} minutes.')
+                                else:
+                                    st.error(f'OTP email failed: {err}')
                         else:
-                            st.error(f'Registration failed: {exc}')
+                            st.success('If email exists, OTP has been sent.')
+
+                with c2:
+                    with st.form('reset_form'):
+                        email_r = st.text_input('Email for Reset')
+                        question_r = st.selectbox('Security Question', SECURITY_QUESTIONS)
+                        answer_r = st.text_input('Security Answer')
+                        otp_r = st.text_input('Enter 6-digit OTP')
+                        new_password = st.text_input('New Password', type='password')
+                        confirm_new = st.text_input('Confirm New Password', type='password')
+                        reset = st.form_submit_button('Verify & Reset Password')
+
+                    if reset:
+                        if new_password != confirm_new:
+                            st.error('Passwords do not match')
+                        elif len(otp_r.strip()) != 6 or not otp_r.strip().isdigit():
+                            st.error('OTP must contain exactly 6 numbers')
+                        elif len(new_password) < 6:
+                            st.error('Password must be at least 6 characters')
+                        else:
+                            user = fetch_one(
+                                'SELECT id, security_question, security_answer_hash FROM users WHERE email = ?',
+                                (email_r.strip().lower(),)
+                            )
+                            if not user:
+                                st.error('Invalid recovery details')
+                            elif user.get('security_question') != question_r:
+                                st.error('Security question does not match')
+                            elif not user.get('security_answer_hash') or not check_password_hash(
+                                user['security_answer_hash'],
+                                answer_r.strip().lower()
+                            ):
+                                st.error('Security answer is incorrect')
+                            else:
+                                otp_row = fetch_one(
+                                    "SELECT id, code, expires_at, attempts, locked_until FROM reset_messages WHERE user_id = ? AND purpose = 'password_reset' ORDER BY id DESC LIMIT 1",
+                                    (user['id'],),
+                                )
+                                now = datetime.now()
+                                if not otp_row:
+                                    st.error('OTP not found. Please request a new OTP.')
+                                else:
+                                    locked_until = parse_dt(otp_row.get('locked_until'))
+                                    expires_at = parse_dt(otp_row.get('expires_at'))
+                                    attempts = int(otp_row.get('attempts') or 0)
+
+                                    if locked_until and now < locked_until:
+                                        st.error('Too many wrong attempts. Try again later.')
+                                    elif expires_at and now > expires_at:
+                                        st.error('OTP expired. Please request a new OTP.')
+                                    elif otp_r.strip() != str(otp_row.get('code', '')).strip():
+                                        attempts += 1
+                                        if attempts >= OTP_MAX_ATTEMPTS:
+                                            run_write(
+                                                'UPDATE reset_messages SET attempts = ?, locked_until = ? WHERE id = ?',
+                                                (attempts, (now + timedelta(minutes=OTP_LOCK_MINUTES)).isoformat(), otp_row['id'])
+                                            )
+                                            st.error('Too many wrong OTP attempts. Recovery temporarily locked.')
+                                        else:
+                                            run_write(
+                                                'UPDATE reset_messages SET attempts = ? WHERE id = ?',
+                                                (attempts, otp_row['id'])
+                                            )
+                                            st.error(f'Invalid OTP. Attempts left: {OTP_MAX_ATTEMPTS - attempts}')
+                                    else:
+                                        run_write(
+                                            'UPDATE users SET password_hash = ? WHERE id = ?',
+                                            (generate_password_hash(new_password), user['id']),
+                                        )
+                                        run_write("DELETE FROM reset_messages WHERE user_id = ? AND purpose = 'password_reset'", (user['id'],))
+                                        st.success('Password reset successful. Please login now.')
+        return
+
+    _, center_col, _ = st.columns([1.1, 2.2, 1.1])
+    with center_col:
+        st.markdown('<div class="back-note">Navigation</div>', unsafe_allow_html=True)
+        if st.button('Back to Welcome', use_container_width=True):
+            st.session_state.auth_view = 'landing'
+            st.rerun()
+
+        st.markdown('<div class="soft-card">', unsafe_allow_html=True)
+        st.subheader('Register')
+        with st.form('register_form'):
+            name = st.text_input('Name')
+            email = st.text_input('Email')
+            phone = st.text_input('Registered Number')
+            security_question = st.selectbox('Choose Security Question', SECURITY_QUESTIONS)
+            security_answer = st.text_input('Security Answer')
+            password = st.text_input('Password', type='password')
+            confirm = st.text_input('Confirm Password', type='password')
+            submitted = st.form_submit_button('Register')
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        if submitted:
+            if not all([name, email, phone, security_question, security_answer, password, confirm]):
+                st.error('Please fill all fields')
+            elif password != confirm:
+                st.error('Passwords do not match')
+            elif len(password) < 6:
+                st.error('Password must be at least 6 characters')
+            else:
+                try:
+                    run_write(
+                        'INSERT INTO users (name, email, phone, password_hash, security_question, security_answer_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        (
+                            name.strip(),
+                            email.strip().lower(),
+                            phone.strip(),
+                            generate_password_hash(password),
+                            security_question,
+                            generate_password_hash(security_answer.strip().lower()),
+                            datetime.now().isoformat(),
+                        ),
+                    )
+                    export_users_to_excel()
+                    st.success('Registration successful. Please login.')
+                    st.session_state.auth_view = 'login'
+                except Exception as exc:
+                    if 'UNIQUE' in str(exc).upper() or 'DUPLICATE' in str(exc).upper():
+                        st.error('Email already exists')
                     else:
-                        pass
-                    finally:
-                        pass
+                        st.error(f'Registration failed: {exc}')
 
 
 def home_page():
@@ -631,6 +878,7 @@ def transaction_page():
         unsafe_allow_html=True,
     )
     st.caption('Risk logic: Low <= 15,000 | Medium 15,001-50,000 | High 50,001-99,999')
+    model_bundle = load_model_bundle()
 
     current_hour = datetime.now().hour
     with st.form('risk_form'):
@@ -653,6 +901,28 @@ def transaction_page():
         check = st.form_submit_button('Check Risk')
 
     if check:
+        input_data = {
+            'transaction_amount': transaction_amount,
+            'transaction_type': transaction_type,
+            'time_of_transaction': time_of_transaction,
+            'device_used': device_used,
+            'location': location,
+            'previous_fraudulent_transactions': 0,
+            'number_of_transactions_last_24h': number_of_transactions_last_24h,
+            'payment_method': payment_method,
+            'account_age': account_age,
+            'payment_gateway': payment_gateway,
+            'merchant_category': merchant_category,
+        }
+
+        if model_bundle is not None:
+            try:
+                model_score = get_fraud_probability(model_bundle, input_data)
+                model_score = max(0.0, min(1.0, model_score))
+                st.write(f'Model Risk Score: **{model_score * 100:.2f}%**')
+            except Exception as exc:
+                st.warning(f'Model score unavailable ({exc}). Rule-based decision still applied.')
+
         level, action = amount_risk_band(transaction_amount)
         st.subheader(f'Risk Level: {level}')
         st.write(f'System Action: **{action}**')
@@ -683,7 +953,12 @@ def transaction_page():
                     'created_at': datetime.now().isoformat()
                 }
                 st.session_state.pending_txn_otp = otp_code
-                st.info('Enter OTP below to confirm this medium-risk transaction.')
+                st.session_state.pending_txn_otp_created_at = datetime.now().isoformat()
+                st.session_state.pending_txn_otp_attempts = 0
+                st.session_state.pending_txn_otp_resend_after = (
+                    datetime.now() + timedelta(seconds=OTP_RESEND_COOLDOWN_SECONDS)
+                ).isoformat()
+                st.info(f'Enter OTP below to confirm this medium-risk transaction. OTP valid for {OTP_EXPIRY_MINUTES} minutes.')
 
         elif level == 'High Risk':
             person_name = beneficiary_name.strip() or 'this person'
@@ -704,24 +979,112 @@ def transaction_page():
             f"via **Email OTP**"
         )
 
+        otp_created = parse_dt(st.session_state.get('pending_txn_otp_created_at'))
+        if otp_created:
+            remaining = int((otp_created + timedelta(minutes=OTP_EXPIRY_MINUTES) - datetime.now()).total_seconds())
+            if remaining > 0:
+                st.caption(f'OTP expires in {remaining} seconds')
+            else:
+                st.warning('OTP expired. Please resend OTP.')
+
+        resend_allowed_at = parse_dt(st.session_state.get('pending_txn_otp_resend_after'))
+        if resend_allowed_at and datetime.now() >= resend_allowed_at:
+            if st.button('Resend OTP', key='resend_txn_otp'):
+                user = st.session_state.user
+                new_otp = generate_otp()
+                sent_ok, err = send_otp_email(user['email'], user['name'], new_otp, subject='FraudShield Transaction OTP')
+                if sent_ok:
+                    st.session_state.pending_txn_otp = new_otp
+                    st.session_state.pending_txn_otp_created_at = datetime.now().isoformat()
+                    st.session_state.pending_txn_otp_attempts = 0
+                    st.session_state.pending_txn_otp_resend_after = (
+                        datetime.now() + timedelta(seconds=OTP_RESEND_COOLDOWN_SECONDS)
+                    ).isoformat()
+                    st.success('New OTP sent to your registered email.')
+                else:
+                    st.error(f'Could not resend OTP: {err}')
+        elif resend_allowed_at:
+            wait_sec = int((resend_allowed_at - datetime.now()).total_seconds())
+            if wait_sec > 0:
+                st.caption(f'Resend available in {wait_sec} seconds')
+
         with st.form('verify_txn_otp_form'):
             entered_otp = st.text_input('Enter 6-digit OTP', max_chars=6)
             verify = st.form_submit_button('Verify OTP and Proceed')
 
         if verify:
-            if entered_otp.strip() == st.session_state.pending_txn_otp:
+            otp_created_at = parse_dt(st.session_state.get('pending_txn_otp_created_at'))
+            if otp_created_at and datetime.now() > (otp_created_at + timedelta(minutes=OTP_EXPIRY_MINUTES)):
+                st.error('OTP expired. Please resend OTP and try again.')
+            elif st.session_state.get('pending_txn_otp_attempts', 0) >= OTP_MAX_ATTEMPTS:
+                st.error('Maximum OTP attempts reached. Start verification again.')
+            elif entered_otp.strip() == st.session_state.pending_txn_otp:
                 st.success('OTP verified. Transaction is possible and confirmed.')
                 st.session_state.pending_medium_txn = None
                 st.session_state.pending_txn_otp = None
+                st.session_state.pending_txn_otp_created_at = None
+                st.session_state.pending_txn_otp_attempts = 0
+                st.session_state.pending_txn_otp_resend_after = None
             else:
-                st.error('Invalid OTP. Please try again.')
+                st.session_state.pending_txn_otp_attempts = st.session_state.get('pending_txn_otp_attempts', 0) + 1
+                attempts_left = OTP_MAX_ATTEMPTS - st.session_state.pending_txn_otp_attempts
+                if attempts_left <= 0:
+                    st.error('Invalid OTP. Maximum attempts reached. Please restart medium-risk verification.')
+                    st.session_state.pending_medium_txn = None
+                    st.session_state.pending_txn_otp = None
+                    st.session_state.pending_txn_otp_created_at = None
+                    st.session_state.pending_txn_otp_attempts = 0
+                    st.session_state.pending_txn_otp_resend_after = None
+                else:
+                    st.error(f'Invalid OTP. Attempts left: {attempts_left}')
+
+
+def testcases_page():
+    st.markdown(
+        """
+        <div class="hero-card">
+            <h2 style="margin:0;">Test Cases and Outputs</h2>
+            <p style="margin:8px 0 0 0;">Presentation-ready model metrics and testcase execution outputs.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    model_bundle = load_model_bundle()
+    if model_bundle is None:
+        st.error('Model bundle not found. Test outputs require the model file.')
+        return
+
+    metrics = None
+    if model_bundle['format'] == 'pipeline_features':
+        model_path = next((p for p in MODEL_CANDIDATES if p.exists()), None)
+        if model_path:
+            try:
+                with open(model_path, 'rb') as f:
+                    raw = pickle.load(f)
+                metrics = raw.get('performance_metrics')
+            except Exception:
+                metrics = None
+
+    if metrics:
+        st.subheader('Model Performance Metrics')
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric('Accuracy', f"{metrics.get('Accuracy', 0)*100:.2f}%")
+        c2.metric('Precision', f"{metrics.get('Precision', 0)*100:.2f}%")
+        c3.metric('Recall', f"{metrics.get('Recall', 0)*100:.2f}%")
+        c4.metric('F1 Score', f"{metrics.get('F1_Score', 0)*100:.2f}%")
+        c5.metric('ROC-AUC', f"{metrics.get('ROC_AUC', 0)*100:.2f}%")
+
+    st.subheader('Testcase Execution Output')
+    table = build_testcase_output_table(model_bundle)
+    st.dataframe(table, use_container_width=True)
 
 
 def main_app():
     st.sidebar.title('FraudShield')
     st.sidebar.write(f"Logged in as: {st.session_state.user['name']}")
 
-    pages = ['Home', 'Transaction']
+    pages = ['Home', 'Transaction', 'Test Cases']
     selected = st.sidebar.radio('Navigate', pages, index=pages.index(st.session_state.page))
     st.session_state.page = selected
 
@@ -733,8 +1096,10 @@ def main_app():
 
     if selected == 'Home':
         home_page()
-    else:
+    elif selected == 'Transaction':
         transaction_page()
+    else:
+        testcases_page()
 
 
 def run():
