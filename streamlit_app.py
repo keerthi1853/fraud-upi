@@ -27,6 +27,11 @@ MODEL_CANDIDATES = [
     BASE_DIR / 'UPI_Fraud_Detection_Model_Fixed.pkl',
     BASE_DIR.parent / 'trans' / 'UPI_Fraud_Detection_Model_Fixed.pkl',
 ]
+ADMIN_EMAILS = {
+    email.strip().lower()
+    for email in os.environ.get('ADMIN_EMAILS', '22jr1a4395@gmail.com').split(',')
+    if email.strip()
+}
 SECURITY_QUESTIONS = [
     "What is your favorite teacher name?",
     "What is your first school name?",
@@ -479,6 +484,12 @@ def parse_dt(value):
         return datetime.fromisoformat(str(value))
     except Exception:
         return None
+
+
+def is_admin_user(user):
+    if not user:
+        return False
+    return str(user.get('email', '')).strip().lower() in ADMIN_EMAILS
 
 
 def get_demo_testcases():
@@ -1093,11 +1104,35 @@ def testcases_page():
     st.dataframe(table, use_container_width=True)
 
 
+def admin_dashboard_page():
+    st.markdown(
+        """
+        <div class="hero-card">
+            <h2 style="margin:0;">Admin Dashboard</h2>
+            <p style="margin:8px 0 0 0;">Only admin can view registered user count and details.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if not is_admin_user(st.session_state.user):
+        st.error('Access denied. Admin only.')
+        return
+
+    users = fetch_all(
+        'SELECT id, name, email, phone, security_question, created_at FROM users ORDER BY id DESC'
+    )
+    st.metric('Total Registered Users', len(users))
+    st.dataframe(pd.DataFrame(users), use_container_width=True)
+
+
 def main_app():
     st.sidebar.title('FraudShield')
     st.sidebar.write(f"Logged in as: {st.session_state.user['name']}")
 
     pages = ['Home', 'Transaction', 'Test Cases']
+    if is_admin_user(st.session_state.user):
+        pages.append('Admin Dashboard')
     selected = st.sidebar.radio('Navigate', pages, index=pages.index(st.session_state.page))
     st.session_state.page = selected
 
@@ -1111,8 +1146,10 @@ def main_app():
         home_page()
     elif selected == 'Transaction':
         transaction_page()
-    else:
+    elif selected == 'Test Cases':
         testcases_page()
+    else:
+        admin_dashboard_page()
 
 
 def run():
