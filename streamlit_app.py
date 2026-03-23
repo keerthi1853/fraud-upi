@@ -11,8 +11,11 @@ import pandas as pd
 import pickle
 import streamlit as st
 from werkzeug.security import check_password_hash, generate_password_hash
-import psycopg2
-from psycopg2.extras import RealDictCursor
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+except Exception:
+    psycopg = None
 
 st.set_page_config(page_title='UPI Shield', page_icon=':shield:', layout='wide')
 
@@ -109,7 +112,9 @@ def apply_custom_theme():
 
 def get_db():
     if DATABASE_URL:
-        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        if psycopg is None:
+            raise RuntimeError('Postgres driver not available. Install psycopg[binary].')
+        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
     else:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
