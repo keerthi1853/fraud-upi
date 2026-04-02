@@ -7,6 +7,7 @@ import smtplib
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from pathlib import Path
+from urllib import error, request as urllib_request
 
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
@@ -110,9 +111,60 @@ def generate_otp() -> str:
     return f"{random.randint(0, 999999):06d}"
 
 
+def send_otp_brevo_api(recipient: str, otp: str, risk_level: str, amount: float) -> tuple[bool, str]:
+    api_key = os.getenv("BREVO_API_KEY", "").strip()
+    sender_email = os.getenv("SMTP_SENDER_EMAIL", "").strip()
+    sender_name = os.getenv("SMTP_SENDER_NAME", "UPI Shield Security").strip()
+
+    if not api_key:
+        return False, "BREVO_API_KEY is missing."
+    if not sender_email:
+        return False, "SMTP_SENDER_EMAIL is missing."
+
+    payload = {
+        "sender": {"name": sender_name, "email": sender_email},
+        "to": [{"email": recipient}],
+        "subject": f"UPI Shield OTP Verification - {risk_level} Risk",
+        "textContent": (
+            f"Dear User,\n\n"
+            f"We detected a {risk_level} risk transaction attempt of INR {amount:,.2f}.\n"
+            f"Your OTP is: {otp}\n"
+            f"This OTP is valid for {OTP_EXPIRY_MINUTES} minutes.\n\n"
+            f"If this was not initiated by you, please stop immediately.\n\n"
+            f"Regards,\nUPI Shield"
+        ),
+    }
+
+    req = urllib_request.Request(
+        "https://api.brevo.com/v3/smtp/email",
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={
+            "accept": "application/json",
+            "content-type": "application/json",
+            "api-key": api_key,
+        },
+    )
+
+    try:
+        with urllib_request.urlopen(req, timeout=15) as response:
+            if 200 <= response.status < 300:
+                return True, "OTP sent successfully via Brevo API."
+            return False, f"Brevo API returned status {response.status}."
+    except error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="ignore")
+        return False, f"Brevo API error {exc.code}: {body}"
+    except Exception as exc:
+        return False, f"Brevo API request failed: {exc}"
+
+
 def send_otp_email(recipient: str, otp: str, risk_level: str, amount: float) -> tuple[bool, str]:
     if not is_valid_email(recipient):
         return False, "Registered email is invalid. Please update your email and retry."
+
+    email_provider = os.getenv("EMAIL_PROVIDER", "").strip().lower()
+    if email_provider == "brevo":
+        return send_otp_brevo_api(recipient, otp, risk_level, amount)
 
     smtp_server = os.getenv("SMTP_SERVER", "").strip()
     smtp_port = int(os.getenv("SMTP_PORT", "587"))
