@@ -4,15 +4,29 @@ services:
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: streamlit run streamlit_app.py --server.port=$PORT --server.address=0.0.0.0
+    startCommand: gunicorn app:app
     envVars:
-      - key: SMTP_HOST
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+      - key: SMTP_SERVER
         value: smtp.gmail.com
       - key: SMTP_PORT
         value: "587"
-      - key: SMTP_USER
+      - key: SMTP_USERNAME
         sync: false
-      - key: SMTP_PASS
+      - key: SMTP_PASSWORD
         sync: false
-      - key: SMTP_FROM
+      - key: SMTP_SENDER_EMAIL
         sync: false
+      - key: SMTP_SENDER_NAME
+        value: UPI Shield Security
+      - key: FLASK_DEBUG
+        value: "false"
+      - key: PYTHON_VERSION
+        value: "3.12.9"
+      - key: WEB_CONCURRENCY
+        value: "2"
+      - key: PYTHONDONTWRITEBYTECODE
+        value: "1"
+      - key: PYTHONUNBUFFERED
+        value: "1"

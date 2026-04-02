@@ -35,6 +35,18 @@
       </ul>
     </section>
 
+    <section class="card">
+      <h2>Project Brief</h2>
+      <p>This project secures UPI payments with registration-based access, risk evaluation, and additional verification for suspicious transfers.</p>
+      <h3>Risk Levels</h3>
+      <ul>
+        <li><strong>Low (0 - 10,000):</strong> Transaction allowed directly.</li>
+        <li><strong>Medium (10,001 - 50,000):</strong> OTP verification required via registered email.</li>
+        <li><strong>High (50,001 - 100,000):</strong> OTP via email plus security notification alert.</li>
+        <li><strong>Blocked (Above 100,000):</strong> Transfer is denied.</li>
+      </ul>
+    </section>
+
     <section class="card center">
       <a class="btn primary" href="{{ url_for('dashboard_page') }}">Open Dashboard</a>
     </section>

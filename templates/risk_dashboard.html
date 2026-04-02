@@ -16,25 +16,122 @@
     </div>
   </header>
 
-  <main class="container">
-    <section class="card">
+  <main class="container dashboard-shell">
+    <section class="card dashboard-rules">
       <h2>Risk Rules</h2>
       <ul>
         <li>More than 1L is not possible to transfer.</li>
-        <li>More than 10k to 50k is Medium Risk.</li>
-        <li>Above 50k to 1L is High Risk.</li>
+        <li>More than 10k to 50k is Medium Risk. OTP is required through email.</li>
+        <li>Above 50k to 1L is High Risk. OTP and security alert are triggered.</li>
         <li>Up to 10k is Low Risk.</li>
       </ul>
     </section>
 
-    <section class="card">
-      <h2>Check Transfer Risk Level</h2>
-      <form id="risk-form">
-        <label>Enter Amount (INR)</label>
-        <input id="amount" type="number" min="0" placeholder="Example: 25000" required />
-        <button type="submit">Check Risk</button>
+    <section class="card dashboard-form-card">
+      <h2>Transaction Risk Analyzer</h2>
+      <form id="risk-form" class="transaction-grid">
+        <div class="field-group">
+          <label>Transaction Amount</label>
+          <div class="number-wrap">
+            <input id="amount" type="number" min="0" placeholder="100000.00" required />
+            <button type="button" class="step-btn" data-target="amount" data-step="-1000">-</button>
+            <button type="button" class="step-btn" data-target="amount" data-step="1000">+</button>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <label>Time of Transaction (Hour 0-23)</label>
+          <div class="number-wrap">
+            <input id="txn-hour" type="number" min="0" max="23" value="15" />
+            <button type="button" class="step-btn" data-target="txn-hour" data-step="-1">-</button>
+            <button type="button" class="step-btn" data-target="txn-hour" data-step="1">+</button>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <label>Beneficiary Name</label>
+          <input id="beneficiary" type="text" placeholder="Keerthi" />
+        </div>
+
+        <div class="field-group">
+          <label>Location</label>
+          <input id="location" type="text" placeholder="Chennai" />
+        </div>
+
+        <div class="field-group">
+          <label>Transaction Type</label>
+          <select id="transaction-type">
+            <option>P2P</option>
+            <option>P2M</option>
+            <option>Bill Pay</option>
+          </select>
+        </div>
+
+        <div class="field-group">
+          <label>Payment Method</label>
+          <select id="payment-method">
+            <option>UPI</option>
+            <option>Card</option>
+            <option>Net Banking</option>
+          </select>
+        </div>
+
+        <div class="field-group">
+          <label>Device Used</label>
+          <select id="device-used">
+            <option>Android</option>
+            <option>iOS</option>
+            <option>Web</option>
+          </select>
+        </div>
+
+        <div class="field-group">
+          <label>Account Age (months)</label>
+          <div class="number-wrap">
+            <input id="account-age" type="number" min="0" value="12" />
+            <button type="button" class="step-btn" data-target="account-age" data-step="-1">-</button>
+            <button type="button" class="step-btn" data-target="account-age" data-step="1">+</button>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <label>Transactions in Last 24H</label>
+          <div class="number-wrap">
+            <input id="txns-24h" type="number" min="0" value="3" />
+            <button type="button" class="step-btn" data-target="txns-24h" data-step="-1">-</button>
+            <button type="button" class="step-btn" data-target="txns-24h" data-step="1">+</button>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <label>Payment Gateway</label>
+          <select id="payment-gateway">
+            <option>Google Pay</option>
+            <option>PhonePe</option>
+            <option>Paytm</option>
+          </select>
+        </div>
+
+        <div class="field-group">
+          <label>Merchant Category</label>
+          <select id="merchant-category">
+            <option>Grocery</option>
+            <option>Utilities</option>
+            <option>Travel</option>
+            <option>Electronics</option>
+          </select>
+        </div>
+
+        <button type="submit" class="full-width">Check Risk</button>
       </form>
+
       <div id="risk-result" class="result hidden"></div>
+      <form id="otp-form" class="hidden">
+        <label>Enter OTP (Sent to your registered email)</label>
+        <input id="otp-input" type="text" inputmode="numeric" pattern="\d{6}" maxlength="6" placeholder="6-digit OTP" required />
+        <button type="submit" class="full-width">Verify OTP</button>
+      </form>
+      <div id="otp-alert" class="alert-block hidden"></div>
     </section>
   </main>
 

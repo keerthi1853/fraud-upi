@@ -71,6 +71,15 @@ button {
   font-size: 0.96rem;
 }
 
+select {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  padding: 11px 12px;
+  font-size: 0.96rem;
+  background: #fff;
+}
+
 button {
   background: var(--primary);
   color: #fff;
@@ -202,6 +211,38 @@ ul {
   padding: 12px;
 }
 
+#otp-form {
+  margin-top: 14px;
+}
+
+.alert-block {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  font-weight: 600;
+}
+
+.alert-medium {
+  background: #fff8ea;
+  border-left: 5px solid #f59e0b;
+}
+
+.alert-high {
+  background: #fff0ef;
+  border-left: 5px solid #d93025;
+}
+
+.alert-success {
+  background: #eefaf1;
+  border-left: 5px solid #1e8e3e;
+}
+
+.alert-error {
+  background: #fff1f1;
+  border-left: 5px solid #7a1f1f;
+}
+
 .hidden {
   display: none;
 }
@@ -220,4 +261,85 @@ ul {
 
 .risk-blocked {
   border-left: 5px solid #7a1f1f;
+}
+
+.dashboard-shell {
+  max-width: 1180px;
+}
+
+.dashboard-rules {
+  background: linear-gradient(120deg, #fff2e8 0%, #ebf6ff 70%, #f0fffa 100%);
+}
+
+.dashboard-form-card {
+  background: linear-gradient(135deg, #dce2ef 0%, #d9f0f0 45%, #d6f1e2 100%);
+}
+
+.transaction-grid {
+  display: grid;
+  gap: 16px 22px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.field-group {
+  display: grid;
+}
+
+.field-group label {
+  margin-top: 0;
+  font-size: 1.05rem;
+  color: #253042;
+}
+
+.transaction-grid input,
+.transaction-grid select {
+  background: #f9fbff;
+  border: 1px solid #cad8ea;
+  color: #1f2a3d;
+  font-size: 1.05rem;
+  min-height: 56px;
+}
+
+.number-wrap {
+  display: grid;
+  grid-template-columns: 1fr 46px 46px;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.number-wrap input {
+  min-width: 0;
+}
+
+.step-btn {
+  margin-top: 0;
+  padding: 0;
+  min-height: 56px;
+  font-size: 1.5rem;
+  font-weight: 700;
+  background: #f4f8ff;
+  color: #1f2a3d;
+  border: 1px solid #cad8ea;
+}
+
+.step-btn:hover {
+  background: #e7f0ff;
+}
+
+.full-width {
+  grid-column: 1 / -1;
+}
+
+#risk-form > .full-width {
+  margin-top: 4px;
+}
+
+#otp-form .full-width {
+  margin-top: 10px;
+}
+
+@media (max-width: 900px) {
+  .transaction-grid {
+    grid-template-columns: 1fr;
+  }
 }
